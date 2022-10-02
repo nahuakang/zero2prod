@@ -1,10 +1,28 @@
+use axum::extract::Form;
 use axum::http::{StatusCode, Uri};
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
+use serde::Deserialize;
 use tokio::signal;
 
-pub async fn fallback(uri: Uri) -> (StatusCode, String) {
+#[derive(Deserialize)]
+pub struct SubscribeData {
+    email: String,
+    name: String,
+}
+
+pub async fn subscribe(Form(subscribe_data): Form<SubscribeData>) -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        format!(
+            "User {} with email {} is subscribed!",
+            subscribe_data.name, subscribe_data.email,
+        ),
+    )
+}
+
+pub async fn fallback(uri: Uri) -> impl IntoResponse {
     (StatusCode::NOT_FOUND, format!("No route {}", uri))
 }
 
@@ -42,6 +60,7 @@ pub fn app() -> Router {
     axum::Router::new()
         .fallback(fallback)
         .route("/health_check", get(health_check))
+        .route("/subscriptions", post(subscribe))
 }
 
 #[cfg(test)]
@@ -49,7 +68,7 @@ mod test {
     use super::*;
     use axum::{
         body::Body,
-        http::{Request, StatusCode},
+        http::{self, Request, StatusCode},
     };
     use tower::ServiceExt; // for `oneshot` and `ready`
 
@@ -74,5 +93,61 @@ mod test {
         let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
 
         assert_eq!(&body[..], b"Health check passed!");
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_returns_200_for_valid_form_data() {
+        let app = app();
+        let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(http::Method::POST)
+                    .uri("/subscriptions")
+                    .header(
+                        http::header::CONTENT_TYPE,
+                        mime::APPLICATION_WWW_FORM_URLENCODED.as_ref(),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_returns_400_when_data_is_missing() {
+        let test_cases = vec![
+            ("name=le%20guin", "missing email"),
+            ("email=ursula_le_guin%40gmail.com", "missing name"),
+            ("", "missing email and name"),
+        ];
+
+        for (invalid_body, error_message) in test_cases {
+            let app = app();
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method(http::Method::POST)
+                        .uri("/subscriptions")
+                        .header(
+                            http::header::CONTENT_TYPE,
+                            mime::APPLICATION_WWW_FORM_URLENCODED.as_ref(),
+                        )
+                        .body(Body::from(invalid_body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(
+                response.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "The API did not fail with 400 Bad Request when the payload was {}.",
+                error_message
+            );
+        }
     }
 }
