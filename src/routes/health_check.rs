@@ -7,7 +7,10 @@ pub async fn health_check() -> impl IntoResponse {
 
 #[cfg(test)]
 mod test {
-    use crate::app;
+    use crate::{
+        configuration::get_configuration,
+        startup::{app, connection_pool},
+    };
     use axum::{
         body::Body,
         http::{Request, StatusCode},
@@ -16,7 +19,11 @@ mod test {
 
     #[tokio::test]
     async fn test_health_check() {
-        let app = app();
+        let configuration = get_configuration().expect("Failed to read configuration");
+        let connection_string = configuration.database.connection_string();
+
+        let pool = connection_pool(&connection_string).await;
+        let app = app(pool);
 
         // `Router` implements `tower::Service<Request<Body>>` so we can
         // call it like any tower service, no need to run an HTTP server.

@@ -1,43 +1,67 @@
-use axum::extract::Form;
+use axum::extract::{Form, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use chrono::Utc;
 use serde::Deserialize;
+use sqlx::postgres::PgPool;
+use uuid::Uuid;
+
+use crate::routes::utils::internal_error;
 
 #[derive(Deserialize)]
-pub struct SubscribeData {
+pub struct SubscriptionData {
     email: String,
     name: String,
 }
 
-pub async fn subscribe(Form(subscribe_data): Form<SubscribeData>) -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        format!(
-            "User {} with email {} is subscribed!",
-            subscribe_data.name, subscribe_data.email,
-        ),
+pub async fn subscribe(
+    State(pool): State<PgPool>,
+    Form(subscription_data): Form<SubscriptionData>,
+) -> impl IntoResponse {
+    match sqlx::query!(
+        r#"
+        INSERT INTO subscriptions (id, email, name, subscribed_at)
+        VALUES ($1, $2, $3, $4)
+        "#,
+        Uuid::new_v4(),
+        subscription_data.email,
+        subscription_data.name,
+        Utc::now(),
     )
+    .execute(&pool)
+    .await
+    .map_err(internal_error)
+    {
+        Ok(_) => (
+            StatusCode::OK,
+            format!(
+                "User {} with email {} is subscribed!",
+                subscription_data.name, subscription_data.email,
+            ),
+        ),
+        Err(e) => e,
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::{app, configuration::get_configuration};
+    use crate::{
+        configuration::get_configuration,
+        startup::{app, connection_pool},
+    };
     use axum::{
         body::Body,
         http::{self, Request, StatusCode},
     };
-    use sqlx::{Connection, PgConnection};
     use tower::ServiceExt; // for `oneshot` and `ready`
 
     #[tokio::test]
     async fn test_subscribe_returns_200_for_valid_form_data() {
-        let app = app();
-
         let configuration = get_configuration().expect("Failed to read configuration");
         let connection_string = configuration.database.connection_string();
-        let mut connection = PgConnection::connect(&connection_string)
-            .await
-            .expect("Failed to connect to Postgres.");
+
+        let pool = connection_pool(&connection_string).await;
+        let app = app(pool.clone());
 
         let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
         let response = app
@@ -58,7 +82,7 @@ mod test {
         assert_eq!(response.status(), StatusCode::OK);
 
         let saved = sqlx::query!("SELECT email, name FROM subscriptions",)
-            .fetch_one(&mut connection)
+            .fetch_one(&pool)
             .await
             .expect("Failed to fetch saved subscription.");
         assert_eq!(saved.email, "ursula_le_guin@gmail.com");
@@ -74,7 +98,12 @@ mod test {
         ];
 
         for (invalid_body, error_message) in test_cases {
-            let app = app();
+            let configuration = get_configuration().expect("Failed to read configuration");
+            let connection_string = configuration.database.connection_string();
+
+            let pool = connection_pool(&connection_string).await;
+            let app = app(pool);
+
             let response = app
                 .oneshot(
                     Request::builder()

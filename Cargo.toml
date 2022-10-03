@@ -12,12 +12,21 @@ name = "zero2prod"
 
 [dependencies]
 axum = "0.6.0-rc.2"
+chrono = { version = "0.4.22", default-features = false, features = ["clock"] }
 config = "0.13.2"
 hyper = { version = "0.14", features = ["full"] }
 mime = "0.3.16"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
+
+[dependencies.uuid]
+version = "1.1.2"
+features = [
+    "v4",                # Lets you generate random UUIDs
+    "fast-rng",          # Use a faster (but still sufficiently random) RNG
+    "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
+]
 
 [dependencies.sqlx]
 version = "0.6"
