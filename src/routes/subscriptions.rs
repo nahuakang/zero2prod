@@ -45,10 +45,7 @@ pub async fn subscribe(
 
 #[cfg(test)]
 mod test {
-    use crate::{
-        configuration::get_configuration,
-        startup::{app, connection_pool},
-    };
+    use crate::routes::utils::spawn_app;
     use axum::{
         body::Body,
         http::{self, Request, StatusCode},
@@ -57,11 +54,9 @@ mod test {
 
     #[tokio::test]
     async fn test_subscribe_returns_200_for_valid_form_data() {
-        let configuration = get_configuration().expect("Failed to read configuration");
-        let connection_string = configuration.database.connection_string();
-
-        let pool = connection_pool(&connection_string).await;
-        let app = app(pool.clone());
+        let test_app = spawn_app().await;
+        let app = test_app.app;
+        let pool = test_app.db_pool;
 
         let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
         let response = app
@@ -85,6 +80,7 @@ mod test {
             .fetch_one(&pool)
             .await
             .expect("Failed to fetch saved subscription.");
+
         assert_eq!(saved.email, "ursula_le_guin@gmail.com");
         assert_eq!(saved.name, "le guin");
     }
@@ -98,11 +94,8 @@ mod test {
         ];
 
         for (invalid_body, error_message) in test_cases {
-            let configuration = get_configuration().expect("Failed to read configuration");
-            let connection_string = configuration.database.connection_string();
-
-            let pool = connection_pool(&connection_string).await;
-            let app = app(pool);
+            let test_app = spawn_app().await;
+            let app = test_app.app;
 
             let response = app
                 .oneshot(
